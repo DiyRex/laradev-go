@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/DiyRex/laradev-go/config"
@@ -48,7 +47,7 @@ func (m *Manager) IsRunning(name string) bool {
 		os.Remove(pidFile)
 		return false
 	}
-	if err := syscall.Kill(pid, 0); err != nil {
+	if !processAlive(pid) {
 		os.Remove(pidFile)
 		return false
 	}
@@ -120,7 +119,7 @@ func (m *Manager) StartService(name string) error {
 	cmd := exec.Command(def.Command, args...)
 	cmd.Stdout = lf
 	cmd.Stderr = lf
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setSysProcAttr(cmd)
 
 	if err := cmd.Start(); err != nil {
 		lf.Close()
@@ -138,7 +137,7 @@ func (m *Manager) StartService(name string) error {
 
 	// Verify it's still alive after a moment
 	time.Sleep(1 * time.Second)
-	if err := syscall.Kill(pid, 0); err != nil {
+	if !processAlive(pid) {
 		os.Remove(m.PidDir + "/" + name + ".pid")
 		return fmt.Errorf("%s exited immediately", name)
 	}
