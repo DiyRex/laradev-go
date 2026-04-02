@@ -9,6 +9,7 @@ import (
 	"github.com/DiyRex/laradev-go/cli"
 	"github.com/DiyRex/laradev-go/config"
 	"github.com/DiyRex/laradev-go/process"
+	"github.com/DiyRex/laradev-go/proxy"
 	"github.com/DiyRex/laradev-go/tui"
 )
 
@@ -25,14 +26,23 @@ func main() {
 		os.Exit(code)
 	}
 
-	// TUI mode
+	// TUI mode — auto-start proxy if configured, stop it when TUI exits.
+	proxyCfg := proxy.LoadProjectProxy(projectDir, cfg.PHPPort)
+	if proxyCfg.IsConfigured() && !proxy.IsRunning(projectDir) {
+		_ = proxy.StartDaemon(proxyCfg, projectDir)
+	}
+
 	app := tui.NewApp(cfg, mgr)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		_ = proxy.StopDaemon(projectDir)
 		os.Exit(1)
 	}
+
+	// Stop proxy when the TUI exits normally (q, Ctrl+C, etc.)
+	_ = proxy.StopDaemon(projectDir)
 }
 
 func findProjectDir() string {

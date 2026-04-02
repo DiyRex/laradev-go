@@ -35,23 +35,25 @@ func CertsDir() string {
 
 // ProxyConfig holds per-project proxy settings stored globally (not in the project).
 type ProxyConfig struct {
-	Domain     string // e.g. "myapp.test"
-	TargetPort string // PHP server port, e.g. "8007"
-	ProxyPort  string // HTTPS listener port (no root needed), e.g. "8443"
-	HTTPPort   string // HTTP redirect listener port, e.g. "8080"
-	Enabled    bool
+	Domain         string // e.g. "myapp.test"
+	TargetPort     string // PHP server port, e.g. "8007"
+	ProxyPort      string // HTTPS listener port (no root needed), e.g. "8443"
+	HTTPPort       string // HTTP redirect listener port, e.g. "8080"
+	Enabled        bool
+	PortForwarding bool // true when 443→8443 and 80→8080 are set up persistently
 
 	projectDir string // set at load time, not written to disk
 }
 
 func defaultProxyConfig(projectDir, phpPort string) *ProxyConfig {
 	return &ProxyConfig{
-		Domain:     "",
-		TargetPort: phpPort,
-		ProxyPort:  "8443",
-		HTTPPort:   "8080",
-		Enabled:    false,
-		projectDir: projectDir,
+		Domain:         "",
+		TargetPort:     phpPort,
+		ProxyPort:      "8443",
+		HTTPPort:       "8080",
+		Enabled:        false,
+		PortForwarding: false,
+		projectDir:     projectDir,
 	}
 }
 
@@ -91,6 +93,8 @@ func LoadProjectProxy(projectDir, phpPort string) *ProxyConfig {
 			cfg.HTTPPort = val
 		case "ENABLED":
 			cfg.Enabled = val == "true"
+		case "PORT_FORWARDING":
+			cfg.PortForwarding = val == "true"
 		}
 	}
 	return cfg
@@ -103,9 +107,11 @@ func (c *ProxyConfig) Save() error {
 		return err
 	}
 
-	enabled := "false"
-	if c.Enabled {
-		enabled = "true"
+	boolStr := func(b bool) string {
+		if b {
+			return "true"
+		}
+		return "false"
 	}
 
 	lines := []string{
@@ -114,7 +120,8 @@ func (c *ProxyConfig) Save() error {
 		fmt.Sprintf("TARGET_PORT=\"%s\"", c.TargetPort),
 		fmt.Sprintf("PROXY_PORT=\"%s\"", c.ProxyPort),
 		fmt.Sprintf("HTTP_PORT=\"%s\"", c.HTTPPort),
-		fmt.Sprintf("ENABLED=\"%s\"", enabled),
+		fmt.Sprintf("ENABLED=\"%s\"", boolStr(c.Enabled)),
+		fmt.Sprintf("PORT_FORWARDING=\"%s\"", boolStr(c.PortForwarding)),
 		"",
 	}
 	path := filepath.Join(dir, "proxy.conf")
@@ -126,9 +133,10 @@ func (c *ProxyConfig) IsConfigured() bool {
 	return c.Domain != "" && c.Enabled
 }
 
-// AppURL returns the URL to show in the TUI — with port if != 443.
+// AppURL returns the URL to show in the TUI.
+// Returns a clean https://domain.test URL when port forwarding (443→8443) is active.
 func (c *ProxyConfig) AppURL() string {
-	if c.ProxyPort == "443" {
+	if c.PortForwarding || c.ProxyPort == "443" {
 		return "https://" + c.Domain
 	}
 	return fmt.Sprintf("https://%s:%s", c.Domain, c.ProxyPort)

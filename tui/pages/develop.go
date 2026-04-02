@@ -40,6 +40,7 @@ func NewDevelopPage(cfg *config.Config, mgr *process.Manager) *DevelopPage {
 func (p *DevelopPage) Enter() {
 	p.state = devMenu
 	p.menu = components.NewMenu([]components.MenuItem{
+		{Label: "Install Dependencies  (composer + npm)", Type: components.MenuAction, ID: "install_deps"},
 		{Label: "Build Assets", Type: components.MenuAction, ID: "build"},
 		{Label: "Run All Tests", Type: components.MenuAction, ID: "test_all"},
 		{Label: "Unit Tests", Type: components.MenuAction, ID: "test_unit"},
@@ -95,6 +96,8 @@ func (p *DevelopPage) updateMenu(msg tea.Msg) tea.Cmd {
 func (p *DevelopPage) handleSelect() tea.Cmd {
 	id := p.menu.SelectedID()
 	switch id {
+	case "install_deps":
+		return p.runCmdShell("Install Dependencies", "composer install && npm install")
 	case "build":
 		return p.runCmd("Build", "npm", "run", "build")
 	case "test_all":
@@ -184,6 +187,15 @@ func (p *DevelopPage) runCmd(title string, name string, args ...string) tea.Cmd 
 	p.spinner = components.NewSpinner(title + "...")
 	return tea.Batch(p.spinner.Init(), func() tea.Msg {
 		output := runCapture(name, args...)
+		return shared.CommandDoneMsg{Output: output, Title: title}
+	})
+}
+
+func (p *DevelopPage) runCmdShell(title, shellCmd string) tea.Cmd {
+	p.state = devRunning
+	p.spinner = components.NewSpinner(title + "...")
+	return tea.Batch(p.spinner.Init(), func() tea.Msg {
+		output := runCapture("bash", "-c", shellCmd)
 		return shared.CommandDoneMsg{Output: output, Title: title}
 	})
 }

@@ -139,6 +139,11 @@ func (m *Manager) StartService(name string) error {
 	time.Sleep(1 * time.Second)
 	if !processAlive(pid) {
 		os.Remove(m.PidDir + "/" + name + ".pid")
+		// Include the last lines of the log so the user can see why it failed.
+		tail := readLogTail(logFile, 8)
+		if tail != "" {
+			return fmt.Errorf("%s exited immediately\n\nLog output:\n%s", name, tail)
+		}
 		return fmt.Errorf("%s exited immediately", name)
 	}
 
@@ -216,4 +221,17 @@ func (m *Manager) RestartAll() []ServiceResult {
 
 func (m *Manager) LogPath(name string) string {
 	return m.PidDir + "/" + name + ".log"
+}
+
+// readLogTail returns the last n lines of a log file as a single string.
+func readLogTail(path string, n int) string {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
