@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/DiyRex/laradev-go/process"
+	"github.com/DiyRex/laradev-go/proxy"
 )
 
 var (
@@ -17,7 +18,7 @@ var (
 	sbSep      = lipgloss.NewStyle().Foreground(lipgloss.Color("#880E4F"))
 )
 
-func RenderStatusBar(mgr *process.Manager, cfg_phpPort, cfg_vitePort string) string {
+func RenderStatusBar(mgr *process.Manager, cfg_phpPort, cfg_vitePort, projectDir string) string {
 	type svc struct {
 		name  string
 		label string
@@ -36,6 +37,21 @@ func RenderStatusBar(mgr *process.Manager, cfg_phpPort, cfg_vitePort string) str
 		} else {
 			parts = append(parts, sbOffDot.Render("○")+" "+sbOffLabel.Render(s.label))
 		}
+	}
+
+	// Proxy indicator — shows HTTPS status.
+	proxyCfg := proxy.LoadProjectProxy(projectDir, cfg_phpPort)
+	if proxyCfg.IsConfigured() {
+		if proxy.IsRunning(projectDir) {
+			parts = append(parts, sbOnDot.Render("●")+" "+sbOnLabel.Render("HTTPS"))
+		} else {
+			// Red dot: configured but not running.
+			redDot := lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444")).Bold(true)
+			redLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("#fca5a5"))
+			parts = append(parts, redDot.Render("●")+" "+redLabel.Render("HTTPS"))
+		}
+	} else {
+		parts = append(parts, sbOffDot.Render("○")+" "+sbOffLabel.Render("HTTPS"))
 	}
 
 	return sbStyle.Render(strings.Join(parts, sbSep.Render("  │  ")))

@@ -201,7 +201,7 @@ func (a App) View() string {
 	titleContent := left + strings.Repeat(" ", gap) + right
 	titleBar := shared.TitleBarStyle.Width(w).Render(titleContent)
 
-	statusBar := components.RenderStatusBar(a.Manager, a.Config.PHPPort, a.Config.VitePort)
+	statusBar := components.RenderStatusBar(a.Manager, a.Config.PHPPort, a.Config.VitePort, a.Config.ProjectDir)
 	infoBox := components.RenderInfoBox(a.Config, a.width)
 
 	var pageView string

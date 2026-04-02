@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/DiyRex/laradev-go/config"
+	"github.com/DiyRex/laradev-go/proxy"
 	"github.com/DiyRex/laradev-go/runner"
 )
 
@@ -87,10 +88,25 @@ func RenderInfoBox(cfg *config.Config, width int) string {
 		infoLabelStyle.Render("DB ") + infoValueStyle.Render(dbInfo) + sep +
 		infoLabelStyle.Render("Log ") + infoValueStyle.Render(logInfo)
 
-	// Line 3: URLs
-	appURL := fmt.Sprintf("http://%s:%s", cfg.PHPHost, cfg.PHPPort)
+	// Line 3: URLs — show HTTPS domain if proxy is configured, with a status dot.
+	proxyCfg := proxy.LoadProjectProxy(cfg.ProjectDir, cfg.PHPPort)
+	var appURL, httpsIndicator string
+	if proxyCfg.IsConfigured() {
+		appURL = proxyCfg.AppURL()
+		if proxy.IsRunning(cfg.ProjectDir) {
+			// Green filled dot — proxy running, HTTPS active
+			httpsIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")).Bold(true).Render("● ")
+		} else {
+			// Red filled dot — configured but proxy is stopped
+			httpsIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444")).Bold(true).Render("● ")
+		}
+	} else {
+		// Dim empty dot — HTTPS not configured
+		appURL = fmt.Sprintf("http://%s:%s", cfg.PHPHost, cfg.PHPPort)
+		httpsIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("○ ")
+	}
 	viteURL := fmt.Sprintf("http://localhost:%s", cfg.VitePort)
-	line3 := infoLabelStyle.Render("App ") + infoURLStyle.Render(appURL) +
+	line3 := httpsIndicator + infoLabelStyle.Render("App ") + infoURLStyle.Render(appURL) +
 		infoDimStyle.Render("    ") +
 		infoLabelStyle.Render("Vite ") + infoURLStyle.Render(viteURL)
 

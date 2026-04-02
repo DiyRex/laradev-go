@@ -9,6 +9,7 @@ import (
 
 	"github.com/DiyRex/laradev-go/config"
 	"github.com/DiyRex/laradev-go/process"
+	"github.com/DiyRex/laradev-go/proxy"
 	"github.com/DiyRex/laradev-go/runner"
 )
 
@@ -20,7 +21,7 @@ func Run(args []string, cfg *config.Config, mgr *process.Manager) int {
 	case "up", "start":
 		return cmdUp(cfg, mgr)
 	case "down", "stop":
-		return cmdDown(mgr)
+		return cmdDown(cfg, mgr)
 	case "restart":
 		return cmdRestart(cfg, mgr)
 	case "status", "st":
@@ -79,6 +80,18 @@ func Run(args []string, cfg *config.Config, mgr *process.Manager) int {
 		return cmdNuke()
 	case "about":
 		return cmdRun("php", "artisan", "about")
+	case "proxy:setup":
+		return cmdProxySetup(cfg)
+	case "proxy:up":
+		return cmdProxyUp(cfg)
+	case "proxy:down":
+		return cmdProxyDown(cfg)
+	case "proxy:status":
+		return cmdProxyStatus(cfg)
+	case "proxy:ports":
+		return cmdProxyPorts(cfg)
+	case "proxy:daemon": // internal — called by proxy:up as background process
+		return cmdProxyDaemon(cfg)
 	case "help", "-h", "--help":
 		PrintHelp()
 		return 0
@@ -103,14 +116,30 @@ func cmdUp(cfg *config.Config, mgr *process.Manager) int {
 			Error(fmt.Sprintf("%s failed: %s", r.Name, r.Message))
 		}
 	}
+
+	// Auto-start HTTPS proxy if configured
+	proxyCfg := proxy.LoadProjectProxy(cfg.ProjectDir, cfg.PHPPort)
+	if proxyCfg.IsConfigured() {
+		if err := proxy.StartDaemon(proxyCfg, cfg.ProjectDir); err != nil {
+			Warn(fmt.Sprintf("HTTPS proxy: %s", err))
+		} else {
+			Success(fmt.Sprintf("HTTPS proxy started → %s", proxyCfg.AppURL()))
+		}
+	}
+
 	fmt.Println()
 	Success("All services are up!")
-	fmt.Printf("  App:  %shttp://%s:%s%s\n", cyan, cfg.PHPHost, cfg.PHPPort, rst)
+	if proxyCfg.IsConfigured() {
+		fmt.Printf("  App:  %s%s%s\n", cyan, proxyCfg.AppURL(), rst)
+	} else {
+		fmt.Printf("  App:  %shttp://%s:%s%s\n", cyan, cfg.PHPHost, cfg.PHPPort, rst)
+		fmt.Printf("  %sTip:%s run %slaradev proxy:setup%s to enable HTTPS\n", gray, rst, cyan, rst)
+	}
 	fmt.Printf("  Vite: %shttp://localhost:%s%s\n\n", cyan, cfg.VitePort, rst)
 	return 0
 }
 
-func cmdDown(mgr *process.Manager) int {
+func cmdDown(cfg *config.Config, mgr *process.Manager) int {
 	Banner()
 	fmt.Println()
 	Step("Stopping all services...")
@@ -123,6 +152,16 @@ func cmdDown(mgr *process.Manager) int {
 			Dimmed(r.Name + " " + r.Message)
 		}
 	}
+
+	// Auto-stop HTTPS proxy if running
+	if proxy.IsRunning(cfg.ProjectDir) {
+		if err := proxy.StopDaemon(cfg.ProjectDir); err != nil {
+			Warn("HTTPS proxy: " + err.Error())
+		} else {
+			Success("HTTPS proxy stopped")
+		}
+	}
+
 	fmt.Println()
 	Success("All services stopped")
 	fmt.Println()
@@ -134,6 +173,9 @@ func cmdRestart(cfg *config.Config, mgr *process.Manager) int {
 	fmt.Println()
 	Step("Restarting...")
 
+	// Stop proxy before restart
+	_ = proxy.StopDaemon(cfg.ProjectDir)
+
 	results := mgr.RestartAll()
 	for _, r := range results {
 		if r.OK {
@@ -142,6 +184,17 @@ func cmdRestart(cfg *config.Config, mgr *process.Manager) int {
 			Error(r.Name + " failed: " + r.Message)
 		}
 	}
+
+	// Restart proxy if configured
+	proxyCfg := proxy.LoadProjectProxy(cfg.ProjectDir, cfg.PHPPort)
+	if proxyCfg.IsConfigured() {
+		if err := proxy.StartDaemon(proxyCfg, cfg.ProjectDir); err != nil {
+			Warn("HTTPS proxy: " + err.Error())
+		} else {
+			Success("HTTPS proxy restarted → " + proxyCfg.AppURL())
+		}
+	}
+
 	fmt.Println()
 	Success("All services restarted!")
 	fmt.Println()
@@ -391,6 +444,114 @@ func cmdNuke() int {
 	return 0
 }
 
+// ─── Proxy commands ───────────────────────────────────────────────────────────
+
+func cmdProxySetup(cfg *config.Config) int {
+	Banner()
+	fmt.Println()
+
+	env := config.ReadEnv(cfg.ProjectDir)
+	domain := proxy.SlugifyDomain(env.AppName)
+
+	Step(fmt.Sprintf("Setting up HTTPS proxy for: %s", domain))
+	fmt.Println()
+
+	proxyCfg := proxy.LoadProjectProxy(cfg.ProjectDir, cfg.PHPPort)
+	proxyCfg.Domain = domain
+	proxyCfg.TargetPort = cfg.PHPPort
+
+	if err := proxy.SetupProxy(proxyCfg); err != nil {
+		Error(err.Error())
+		return 1
+	}
+	return 0
+}
+
+func cmdProxyUp(cfg *config.Config) int {
+	proxyCfg := proxy.LoadProjectProxy(cfg.ProjectDir, cfg.PHPPort)
+	if !proxyCfg.IsConfigured() {
+		Error("Proxy not configured. Run: laradev proxy:setup")
+		return 1
+	}
+	if proxy.IsRunning(cfg.ProjectDir) {
+		Info("Proxy already running → " + proxyCfg.AppURL())
+		return 0
+	}
+	if err := proxy.StartDaemon(proxyCfg, cfg.ProjectDir); err != nil {
+		Error("Failed to start proxy: " + err.Error())
+		return 1
+	}
+	Success(fmt.Sprintf("Proxy started → %s", proxyCfg.AppURL()))
+	fmt.Printf("  Forwarding to: http://localhost:%s\n\n", proxyCfg.TargetPort)
+	return 0
+}
+
+func cmdProxyDown(cfg *config.Config) int {
+	if !proxy.IsRunning(cfg.ProjectDir) {
+		Warn("Proxy not running")
+		return 0
+	}
+	if err := proxy.StopDaemon(cfg.ProjectDir); err != nil {
+		Warn("Could not stop proxy: " + err.Error())
+	}
+	Success("Proxy stopped")
+	return 0
+}
+
+func cmdProxyStatus(cfg *config.Config) int {
+	proxyCfg := proxy.LoadProjectProxy(cfg.ProjectDir, cfg.PHPPort)
+
+	Banner()
+	fmt.Println()
+	fmt.Printf("  %-14s %s\n", "Domain:", proxyCfg.Domain)
+	fmt.Printf("  %-14s %s\n", "Target:", fmt.Sprintf("http://localhost:%s", proxyCfg.TargetPort))
+	fmt.Printf("  %-14s %s\n", "Proxy port:", proxyCfg.ProxyPort)
+
+	if !proxyCfg.IsConfigured() {
+		fmt.Printf("\n  %sNot configured.%s Run: laradev proxy:setup\n\n", red, rst)
+		return 0
+	}
+
+	if proxy.IsRunning(cfg.ProjectDir) {
+		fmt.Printf("\n  %s● HTTPS active%s  →  %s%s%s\n\n", green, rst, cyan, proxyCfg.AppURL(), rst)
+	} else {
+		fmt.Printf("\n  %s● Proxy stopped%s  Run: laradev proxy:up\n\n", red, rst)
+	}
+	return 0
+}
+
+func cmdProxyPorts(cfg *config.Config) int {
+	proxyCfg := proxy.LoadProjectProxy(cfg.ProjectDir, cfg.PHPPort)
+	if !proxyCfg.IsConfigured() {
+		Error("Proxy not configured. Run: laradev proxy:setup first.")
+		return 1
+	}
+
+	Step("Applying port forwarding rules (sudo required)…")
+	fmt.Println()
+
+	if err := proxy.SetupPortForwarding(proxyCfg); err != nil {
+		Error("Port forwarding failed: " + err.Error())
+		return 1
+	}
+
+	Success(fmt.Sprintf("Port 443 → %s and 80 → %s redirected", proxyCfg.ProxyPort, proxyCfg.HTTPPort))
+	Info("Note: these rules reset on reboot. Run proxy:ports again after restarting.")
+	fmt.Println()
+	return 0
+}
+
+// cmdProxyDaemon is the internal entry point for the background daemon process.
+// It is not advertised in help — it is only launched by cmdProxyUp.
+func cmdProxyDaemon(cfg *config.Config) int {
+	proxyCfg := proxy.LoadProjectProxy(cfg.ProjectDir, cfg.PHPPort)
+	if err := proxy.RunDaemon(proxyCfg); err != nil {
+		fmt.Fprintf(os.Stderr, "proxy daemon: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 func PrintHelp() {
 	Banner()
 	fmt.Println()
@@ -437,6 +598,13 @@ func PrintHelp() {
 			{"optimize", "Optimize app"},
 			{"setup", "First-time setup"},
 			{"nuke", "Full reset"},
+		}},
+		{"HTTPS Proxy", []struct{ cmd, desc string }{
+			{"proxy:setup", "One-time .test domain + TLS setup"},
+			{"proxy:up", "Start HTTPS reverse proxy"},
+			{"proxy:down", "Stop HTTPS reverse proxy"},
+			{"proxy:status", "Show proxy status"},
+			{"proxy:ports", "Apply port 443→8443 redirect (sudo)"},
 		}},
 	}
 

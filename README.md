@@ -8,6 +8,7 @@
   <p align="center">
     <a href="#install">Install</a> &nbsp;&bull;&nbsp;
     <a href="#quick-start">Quick Start</a> &nbsp;&bull;&nbsp;
+    <a href="#https-proxy">HTTPS Proxy</a> &nbsp;&bull;&nbsp;
     <a href="#cli-command-reference">CLI Reference</a> &nbsp;&bull;&nbsp;
     <a href="#interactive-tui">TUI Guide</a>
   </p>
@@ -25,13 +26,13 @@ It works in two ways:
 
 ```
  LaraDev  >  Main Menu
- PHP:8007 [ON]  Vite:5173 [ON]  Queue [ON]  Sched [--]  Reverb [--]
+ ● PHP:8007  │  ● Vite:5173  │  ○ Queue  │  ○ Sched  │  ● HTTPS
  ╭──────────────────────────────────────────────────────────────────╮
  │ Taskify [local]  ~/Projects/Laravel/taskify                     │
  │                                                                 │
  │ PHP 8.4.1 │ Node v22.0.0 │ DB sqlite (48K) │ Log 4.0K          │
  │                                                                 │
- │ App http://0.0.0.0:8007    Vite http://localhost:5173           │
+ │ ● App https://taskify.test:8443    Vite http://localhost:5173   │
  │                                                                 │
  │ Pest · Vite · Breeze                                            │
  ╰──────────────────────────────────────────────────────────────────╯
@@ -55,51 +56,65 @@ It works in two ways:
 ### Features
 
 - **Service management** — Start, stop, restart PHP server, Vite, queue worker, scheduler, and Reverb with PID/memory tracking
+- **HTTPS proxy** — Automatic `.test` domain with trusted TLS certificates (no browser warnings). Powered by a built-in Go reverse proxy + mkcert
 - **Database operations** — Migrate, rollback, fresh, seed — all with confirmation dialogs for destructive actions
 - **Code generation** — 15 `artisan make:*` generators with smart defaults (Model with `-mfscR`, Event + Listener paired, etc.)
 - **Test runner** — Auto-detects Pest vs PHPUnit, run all/unit/feature/filtered
 - **Log viewer** — Live-tailing with scrollable viewports, Laravel Pail support, grep search
 - **Project detection** — Reads `.env`, `composer.json`, and project structure to show app name, environment, versions, DB type, starter kit, and more
 - **Cache tools** — Clear individual or all caches, optimize for production
-- **Configurable** — Ports, queue settings, and more via `.dev.conf` or interactive config editor
+- **Configurable** — Ports, queue settings, and more via `.laradev.conf` or interactive config editor
 - **Zero dependencies** — Single ~5MB binary. No runtime Go, Python, or Node requirements beyond what Laravel itself needs
 
 ---
 
 ## Install
 
-### Quick Install (Linux / macOS)
+### One-line install (macOS and Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DiyRex/laradev-go/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/DiyRex/laradev-go/main/scripts/install.sh | bash
 ```
 
-Auto-detects your OS and architecture, downloads the latest release binary, and installs to `/usr/local/bin`.
+The script:
+- Auto-detects your OS and CPU architecture
+- Downloads the latest `laradev` binary directly from GitHub Releases (no package manager required)
+- Downloads and installs [mkcert](https://github.com/FiloSottile/mkcert) as a self-contained binary
+- Runs `mkcert -install` to trust the local CA in your system keychain (once, for HTTPS support)
+- Creates `~/.laradev/` for storing proxy configs and certificates
 
-### Download from Releases
+### Update to latest version
 
-Pre-built binaries for every platform are available on the [Releases](https://github.com/DiyRex/laradev-go/releases) page:
+Run the same command again — the script detects an existing installation and replaces only the binary. Your `~/.laradev/` directory (proxy configs, certificates, project state) is **never touched** during an update.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DiyRex/laradev-go/main/scripts/install.sh | bash
+```
+
+### Manual download
+
+Pre-built binaries for every platform are on the [Releases](https://github.com/DiyRex/laradev-go/releases) page:
 
 | Platform | Binary |
 |---|---|
-| Linux (x86_64) | `laradev-linux-amd64` |
-| Linux (ARM64) | `laradev-linux-arm64` |
-| macOS (Intel) | `laradev-darwin-amd64` |
-| macOS (Apple Silicon) | `laradev-darwin-arm64` |
-| Windows (x86_64) | `laradev-windows-amd64.exe` |
+| Linux x86_64 | `laradev-linux-amd64` |
+| Linux ARM64 | `laradev-linux-arm64` |
+| macOS Intel | `laradev-darwin-amd64` |
+| macOS Apple Silicon | `laradev-darwin-arm64` |
+| Windows x86_64 | `laradev-windows-amd64.exe` |
 
-Download, `chmod +x`, and move to your PATH.
+Download, `chmod +x`, and move to your `PATH`.
 
-### Build from Source
+### Build from source
 
 ```bash
 git clone https://github.com/DiyRex/laradev-go.git
-cd laradev
+cd laradev-go
 go mod tidy
 make build
 ```
 
-Requires Go 1.21+. Produces the `laradev` binary in the parent directory.
+Requires Go 1.21+. Produces the `laradev` binary in the project directory.
 
 ---
 
@@ -122,21 +137,108 @@ LaraDev finds your Laravel project automatically by looking for the `artisan` fi
 
 ---
 
-## Compatibility
+## HTTPS Proxy
 
-LaraDev works with any standard Laravel project:
+LaraDev includes a built-in HTTPS reverse proxy that gives your project a `.test` domain with a trusted TLS certificate — similar to Laravel Herd, but implemented entirely in the `laradev` binary with no Nginx or system daemons required.
 
-| Variant | Supported |
+All proxy state is stored in `~/.laradev/` — **nothing is added to your project directory**.
+
+### How it works
+
+| Component | What it does |
 |---|---|
-| Plain Laravel | Yes |
-| Laravel Breeze (React / Vue / Blade) | Yes |
-| Laravel Jetstream (Livewire / Inertia) | Yes |
-| Filament | Yes |
-| Pest / PHPUnit | Auto-detected |
-| Vite / Laravel Mix | Auto-detected |
-| SQLite / MySQL / PostgreSQL | Yes |
-| Queue workers (database, Redis, SQS) | Yes |
-| Laravel Reverb (WebSockets) | Auto-detected |
+| **Domain** | Auto-derived from `APP_NAME` in `.env` — `"My Shop"` → `myshop.test` |
+| **DNS** | Adds `127.0.0.1 myapp.test` to `/etc/hosts` (one line, sudo once) |
+| **TLS cert** | Generated by `mkcert`, stored in `~/.laradev/certs/`, trusted by your system |
+| **Proxy** | Go reverse proxy listening on `127.0.0.1:8443`, forwarding to `localhost:PHP_PORT` |
+| **HTTP redirect** | Port `8080` redirects all traffic to HTTPS |
+
+The proxy runs on port `8443` (no root required). Use `proxy:ports` to enable a one-line `pfctl`/`iptables` redirect so port `443` routes there too.
+
+### Setup (one time per project)
+
+```bash
+cd ~/my-laravel-app
+
+laradev proxy:setup
+```
+
+This will:
+1. Check that `mkcert` is installed (installed by the installer script)
+2. Generate a trusted certificate for your `.test` domain
+3. Add the domain to `/etc/hosts`
+4. Save proxy config to `~/.laradev/projects/{id}/proxy.conf`
+5. Print optional instructions for enabling port `443` redirect
+
+That's the only command you ever need to run manually. After setup, the proxy is fully automatic.
+
+### Automatic start / stop
+
+Once configured, the proxy **starts and stops automatically** with your services — no separate commands needed:
+
+```bash
+laradev up        # Starts PHP + Vite + Queue + HTTPS proxy
+laradev down      # Stops everything including the proxy
+laradev restart   # Restarts everything including the proxy
+```
+
+### Toggle from the TUI
+
+Open the TUI (`laradev`), navigate to **Manage Services** — the HTTPS Proxy appears as the last entry:
+
+```
+ [ON]  HTTPS Proxy (myapp.test)  --  running
+```
+
+Select it to stop the proxy. Select a stopped proxy to start it. If not yet configured, a help message tells you to run `laradev proxy:setup`.
+
+### Status check
+
+```bash
+laradev proxy:status   # Show domain, target port, and running state
+```
+
+### Optional: true port 443 (no :8443 in URL)
+
+The proxy daemon itself runs on port `8443` (does not require root). To access your app via `https://myapp.test` (port 443), you need an OS-level port redirect. Run once:
+
+```bash
+laradev proxy:ports
+```
+
+This applies the redirect rule using `pfctl` on macOS or `iptables` on Linux. The rule is **not persistent** — it resets on reboot. Re-run `proxy:ports` after each restart, or add it to a startup script.
+
+**macOS equivalent (manual):**
+```bash
+sudo sh -c "echo 'rdr pass on lo0 proto tcp from any to any port 443 -> 127.0.0.1 port 8443' | pfctl -ef -"
+```
+
+**Linux equivalent (manual):**
+```bash
+sudo iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 8443
+```
+
+### TUI indicators
+
+The info box and status bar show the proxy state at a glance:
+
+| Indicator | Meaning |
+|---|---|
+| `● HTTPS` green | Proxy running — HTTPS active |
+| `● HTTPS` red | Proxy configured but stopped (`proxy:up` to start) |
+| `○ HTTPS` dim | Not configured yet (`proxy:setup` to configure) |
+
+### Proxy configuration
+
+Stored at `~/.laradev/projects/{id}/proxy.conf` — managed by `laradev`, no need to edit manually:
+
+```ini
+DOMAIN="myapp.test"
+TARGET_PORT="8007"    # PHP server port
+PROXY_PORT="8443"     # HTTPS listener
+HTTP_PORT="8080"      # HTTP → HTTPS redirect listener
+ENABLED="true"
+```
 
 ---
 
@@ -155,7 +257,17 @@ LaraDev works with any standard Laravel project:
 | `laradev queue` | | Start queue worker only |
 | `laradev schedule` | | Start Laravel scheduler only |
 
-Default ports: PHP `0.0.0.0:8007`, Vite `localhost:5173` (configurable).
+Default ports: PHP `0.0.0.0:8007`, Vite `localhost:5173` (configurable via `.laradev.conf`).
+
+### HTTPS Proxy
+
+| Command | Description |
+|---|---|
+| `laradev proxy:setup` | **One-time setup** — generate cert, add `/etc/hosts` entry, save config |
+| `laradev proxy:status` | Show domain, target port, and running state |
+| `laradev proxy:up` | Manually start the proxy (automatic with `laradev up`) |
+| `laradev proxy:down` | Manually stop the proxy (automatic with `laradev down`) |
+| `laradev proxy:ports` | Apply port 443 → 8443 redirect via pfctl/iptables (sudo, resets on reboot) |
 
 ### Development
 
@@ -232,9 +344,9 @@ Run `laradev` without arguments to launch the interactive terminal UI.
 
 ### Pages
 
-**Main Menu** — Title bar, live service status bar, project info box (name, env, path, versions, DB, URLs, detected tools), and section-based navigation.
+**Main Menu** — Title bar, live service status bar (PHP / Vite / Queue / Sched / HTTPS), project info box (name, env, path, versions, DB, URLs with HTTPS indicator, detected tools), and section-based navigation.
 
-**Manage Services** — Per-service control with live PID and memory display. Supports PHP Server, Vite, Queue Worker, Scheduler, and Reverb WebSocket.
+**Manage Services** — Per-service control with live PID and memory display. Supports PHP Server, Vite, Queue Worker, Scheduler, Reverb WebSocket, and **HTTPS Proxy** (toggle start/stop directly from the list; shows setup instructions if not yet configured).
 
 **Database** — Run Migrations, Fresh + Seed, Seed, Rollback, Rollback N steps, Reset All. Destructive operations require confirmation.
 
@@ -262,7 +374,7 @@ Run `laradev` without arguments to launch the interactive terminal UI.
 
 **Logs** — Live tail with scrollable viewport (500-line buffer), Laravel Pail, per-service logs, combined view, grep search, and log clearing.
 
-**Config** — Edit settings interactively. Changes persist to `.dev.conf`:
+**Config** — Edit settings interactively. Changes persist to `.laradev.conf`:
 
 | Setting | Default |
 |---|---|
@@ -290,15 +402,16 @@ LaraDev automatically reads your project environment on launch:
 | Build tool | `vite.config.js` / `.ts` or `webpack.mix.js` |
 | Starter kit | `composer.json` → Breeze, Jetstream, or Filament |
 
-This information is displayed in the TUI info box and the `laradev status` CLI output.
-
 ---
 
 ## Configuration
 
-Config overrides are stored in `.dev.conf` at the project root (add to `.gitignore`):
+### Per-project config (`.laradev.conf`)
+
+Port and queue overrides are stored in `.laradev.conf` at the project root. Add this file to your `.gitignore`.
 
 ```ini
+# .laradev.conf
 PHP_HOST="0.0.0.0"
 PHP_PORT="8007"
 VITE_PORT="5173"
@@ -307,7 +420,24 @@ QUEUE_TIMEOUT="90"
 QUEUE_SLEEP="3"
 ```
 
-Edit via the TUI Config page or any text editor. Service PIDs and logs are stored in `.dev_pids/`.
+Edit via the TUI Config page or any text editor. Service PIDs and logs are stored in `.laradev_pids/`.
+
+### Global config (`~/.laradev/`)
+
+HTTPS proxy state is stored globally — nothing proxy-related is written to the project directory:
+
+```
+~/.laradev/
+  certs/                        # mkcert-generated certificates
+    myapp.test.pem
+    myapp.test-key.pem
+  projects/
+    {id}/                       # keyed by project path hash
+      proxy.conf                # domain, ports, enabled flag
+      proxy.pid                 # daemon PID (while running)
+```
+
+This directory is **never modified by `laradev update`** — your certificates and proxy configs survive upgrades.
 
 ---
 
@@ -316,7 +446,8 @@ Edit via the TUI Config page or any text editor. Service PIDs and logs are store
 - **Single binary** — Compiled Go with no runtime dependencies. ~5MB static binary.
 - **Bubble Tea** — Elm-architecture TUI framework for robust terminal handling.
 - **Lipgloss** — Terminal styling with the Cerise color theme.
-- **Process management** — PID tracking in `.dev_pids/`, recursive child process kill via process groups and `pgrep` tree walking.
+- **Process management** — PID tracking in `.laradev_pids/`, recursive child process kill via process groups and `pgrep` tree walking.
+- **Built-in HTTPS proxy** — `net/http/httputil.ReverseProxy` with TLS termination. No Nginx or system daemons.
 - **Alternate screen** — TUI runs in the terminal's alternate buffer; your shell stays clean.
 - **Interactive handoff** — Tinker and Pail fully take over the terminal, then return to the TUI seamlessly.
 - **Graceful shutdown** — Process groups ensure ports are released immediately on stop.
@@ -325,15 +456,17 @@ Edit via the TUI Config page or any text editor. Service PIDs and logs are store
 
 ## Releases
 
-Releases are automated via GitHub Actions. Creating a GitHub release triggers builds for all platforms:
+Releases are automated via GitHub Actions with GoReleaser. Creating a GitHub release triggers cross-compiled builds for all platforms:
 
-- `laradev-linux-amd64`
-- `laradev-linux-arm64`
-- `laradev-darwin-amd64`
-- `laradev-darwin-arm64`
-- `laradev-windows-amd64.exe`
+| Binary | Platform |
+|---|---|
+| `laradev-linux-amd64` | Linux x86_64 |
+| `laradev-linux-arm64` | Linux ARM64 (Raspberry Pi 4+, AWS Graviton) |
+| `laradev-darwin-amd64` | macOS Intel |
+| `laradev-darwin-arm64` | macOS Apple Silicon (M1/M2/M3/M4) |
+| `laradev-windows-amd64.exe` | Windows x86_64 |
 
-All binaries are statically linked with stripped debug symbols.
+All binaries are statically linked (`CGO_ENABLED=0`) with stripped debug symbols.
 
 ---
 
@@ -341,8 +474,11 @@ All binaries are statically linked with stripped debug symbols.
 
 - PHP 8.2+ with a Laravel project
 - Node.js + npm (for Vite / frontend assets)
-- Linux or macOS
+- Linux or macOS (Windows: CLI mode only, no TUI)
 - Standard Unix tools: `pgrep`, `tail`, `grep`
+
+**For HTTPS proxy (optional):**
+- `mkcert` — installed automatically by the install script
 
 ---
 

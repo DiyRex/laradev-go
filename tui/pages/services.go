@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/DiyRex/laradev-go/config"
 	"github.com/DiyRex/laradev-go/process"
+	"github.com/DiyRex/laradev-go/proxy"
 	"github.com/DiyRex/laradev-go/tui/components"
 	"github.com/DiyRex/laradev-go/tui/shared"
 )
@@ -75,6 +76,21 @@ func (p *ServicesPage) rebuildMenu() {
 		}
 		items = append(items, components.MenuItem{Label: label, Type: components.MenuAction, ID: def.Name})
 	}
+
+	// HTTPS Proxy entry — managed outside the process.Manager
+	proxyCfg := proxy.LoadProjectProxy(p.cfg.ProjectDir, p.cfg.PHPPort)
+	var proxyLabel string
+	if proxyCfg.IsConfigured() {
+		if proxy.IsRunning(p.cfg.ProjectDir) {
+			proxyLabel = fmt.Sprintf("[ON]  HTTPS Proxy (%s)  --  running", proxyCfg.Domain)
+		} else {
+			proxyLabel = fmt.Sprintf("[--]  HTTPS Proxy (%s)  --  stopped", proxyCfg.Domain)
+		}
+	} else {
+		proxyLabel = "[--]  HTTPS Proxy  --  not configured"
+	}
+	items = append(items, components.MenuItem{Label: proxyLabel, Type: components.MenuAction, ID: "proxy"})
+
 	items = append(items, components.MenuItem{Label: "Back", Type: components.MenuAction, ID: "back"})
 	p.menu = components.NewMenu(items)
 }
@@ -105,6 +121,10 @@ func (p *ServicesPage) updateMenu(msg tea.Msg) tea.Cmd {
 			id := p.menu.SelectedID()
 			if id == "back" {
 				return backCmd()
+			}
+			// HTTPS Proxy is managed separately from process.Manager
+			if id == "proxy" {
+				return p.handleProxySelect()
 			}
 			p.selSvc = id
 			if p.mgr.IsRunning(id) {
@@ -147,6 +167,10 @@ func (p *ServicesPage) updateAction(msg tea.Msg) tea.Cmd {
 				p.state = svcStateRunning
 				p.spinner = components.NewSpinner(fmt.Sprintf("Stopping %s...", p.selSvc))
 				return tea.Batch(p.spinner.Init(), p.cmdStop(p.selSvc))
+			case "proxy-stop":
+				p.state = svcStateRunning
+				p.spinner = components.NewSpinner("Stopping HTTPS proxy...")
+				return tea.Batch(p.spinner.Init(), p.cmdStopProxy())
 			case "cancel":
 				p.state = svcStateMenu
 			}
@@ -182,6 +206,56 @@ func (p *ServicesPage) updateResult(msg tea.Msg) tea.Cmd {
 		return p.result.Update(msg)
 	}
 	return p.result.Update(msg)
+}
+
+func (p *ServicesPage) handleProxySelect() tea.Cmd {
+	proxyCfg := proxy.LoadProjectProxy(p.cfg.ProjectDir, p.cfg.PHPPort)
+	if !proxyCfg.IsConfigured() {
+		rb := components.NewResultBox(
+			"HTTPS proxy is not configured for this project.\n\n"+
+				"Run the following command from your terminal to set it up:\n\n"+
+				"  laradev proxy:setup\n\n"+
+				"This will:\n"+
+				"  • Generate a trusted TLS certificate (via mkcert)\n"+
+				"  • Add your .test domain to /etc/hosts\n"+
+				"  • Save proxy config to ~/.laradev/\n\n"+
+				"After setup, the proxy starts automatically with 'laradev up'.",
+			p.width, p.height-2)
+		p.result = &rb
+		p.state = svcStateResult
+		return nil
+	}
+	if proxy.IsRunning(p.cfg.ProjectDir) {
+		p.action = components.NewMenu([]components.MenuItem{
+			{Label: fmt.Sprintf("Stop HTTPS Proxy (%s)", proxyCfg.Domain), Type: components.MenuAction, ID: "proxy-stop"},
+			{Label: "Cancel", Type: components.MenuAction, ID: "cancel"},
+		})
+		p.state = svcStateAction
+		return nil
+	}
+	// Start proxy
+	p.state = svcStateRunning
+	p.spinner = components.NewSpinner("Starting HTTPS proxy...")
+	return tea.Batch(p.spinner.Init(), p.cmdStartProxy())
+}
+
+func (p *ServicesPage) cmdStartProxy() tea.Cmd {
+	return func() tea.Msg {
+		proxyCfg := proxy.LoadProjectProxy(p.cfg.ProjectDir, p.cfg.PHPPort)
+		if err := proxy.StartDaemon(proxyCfg, p.cfg.ProjectDir); err != nil {
+			return shared.CommandDoneMsg{Output: "ERR  Failed to start HTTPS proxy: " + err.Error()}
+		}
+		return shared.CommandDoneMsg{Output: "OK  HTTPS proxy started\n    → " + proxyCfg.AppURL()}
+	}
+}
+
+func (p *ServicesPage) cmdStopProxy() tea.Cmd {
+	return func() tea.Msg {
+		if err := proxy.StopDaemon(p.cfg.ProjectDir); err != nil {
+			return shared.CommandDoneMsg{Output: "WARN  " + err.Error()}
+		}
+		return shared.CommandDoneMsg{Output: "OK  HTTPS proxy stopped"}
+	}
 }
 
 func (p *ServicesPage) cmdStart(name string) tea.Cmd {

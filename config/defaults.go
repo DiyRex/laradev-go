@@ -8,7 +8,7 @@ const (
 	DefaultQueueTimeout = "90"
 	DefaultQueueSleep   = "3"
 
-	ConfigFileName = ".dev.conf"
-	PidDirName     = ".dev_pids"
+	ConfigFileName = ".laradev.conf"
+	PidDirName     = ".laradev_pids"
 	LogDirName     = "storage/logs"
 )

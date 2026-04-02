@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/DiyRex/laradev-go/config"
 	"github.com/DiyRex/laradev-go/process"
+	"github.com/DiyRex/laradev-go/proxy"
 	"github.com/DiyRex/laradev-go/tui/components"
 	"github.com/DiyRex/laradev-go/tui/shared"
 )
@@ -171,8 +172,24 @@ func (p *MainMenuPage) cmdStartAll() tea.Cmd {
 				lines = append(lines, fmt.Sprintf("ERR %s: %s", r.Name, r.Message))
 			}
 		}
-		lines = append(lines, "", fmt.Sprintf("App:  http://%s:%s", p.cfg.PHPHost, p.cfg.PHPPort),
-			fmt.Sprintf("Vite: http://localhost:%s", p.cfg.VitePort))
+
+		// Auto-start HTTPS proxy if configured
+		proxyCfg := proxy.LoadProjectProxy(p.cfg.ProjectDir, p.cfg.PHPPort)
+		if proxyCfg.IsConfigured() {
+			if err := proxy.StartDaemon(proxyCfg, p.cfg.ProjectDir); err != nil {
+				lines = append(lines, fmt.Sprintf("ERR HTTPS proxy: %s", err))
+			} else {
+				lines = append(lines, fmt.Sprintf("OK  HTTPS proxy → %s", proxyCfg.AppURL()))
+			}
+		}
+
+		lines = append(lines, "")
+		if proxyCfg.IsConfigured() {
+			lines = append(lines, fmt.Sprintf("App:  %s", proxyCfg.AppURL()))
+		} else {
+			lines = append(lines, fmt.Sprintf("App:  http://%s:%s", p.cfg.PHPHost, p.cfg.PHPPort))
+		}
+		lines = append(lines, fmt.Sprintf("Vite: http://localhost:%s", p.cfg.VitePort))
 		return shared.ServiceActionDoneMsg{Lines: lines}
 	}
 }
@@ -184,6 +201,16 @@ func (p *MainMenuPage) cmdStopAll() tea.Cmd {
 		for _, r := range results {
 			lines = append(lines, fmt.Sprintf("OK  %s %s", r.Name, r.Message))
 		}
+
+		// Auto-stop HTTPS proxy if running
+		if proxy.IsRunning(p.cfg.ProjectDir) {
+			if err := proxy.StopDaemon(p.cfg.ProjectDir); err != nil {
+				lines = append(lines, "WARN HTTPS proxy: "+err.Error())
+			} else {
+				lines = append(lines, "OK  HTTPS proxy stopped")
+			}
+		}
+
 		lines = append(lines, "", "All services stopped.")
 		return shared.ServiceActionDoneMsg{Lines: lines}
 	}
@@ -191,6 +218,9 @@ func (p *MainMenuPage) cmdStopAll() tea.Cmd {
 
 func (p *MainMenuPage) cmdRestartAll() tea.Cmd {
 	return func() tea.Msg {
+		// Stop proxy before restart
+		_ = proxy.StopDaemon(p.cfg.ProjectDir)
+
 		results := p.mgr.RestartAll()
 		var lines []string
 		for _, r := range results {
@@ -200,6 +230,17 @@ func (p *MainMenuPage) cmdRestartAll() tea.Cmd {
 				lines = append(lines, fmt.Sprintf("ERR %s: %s", r.Name, r.Message))
 			}
 		}
+
+		// Restart proxy if configured
+		proxyCfg := proxy.LoadProjectProxy(p.cfg.ProjectDir, p.cfg.PHPPort)
+		if proxyCfg.IsConfigured() {
+			if err := proxy.StartDaemon(proxyCfg, p.cfg.ProjectDir); err != nil {
+				lines = append(lines, fmt.Sprintf("ERR HTTPS proxy: %s", err))
+			} else {
+				lines = append(lines, fmt.Sprintf("OK  HTTPS proxy → %s", proxyCfg.AppURL()))
+			}
+		}
+
 		lines = append(lines, "", "All services restarted.")
 		return shared.ServiceActionDoneMsg{Lines: lines}
 	}
