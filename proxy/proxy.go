@@ -91,14 +91,43 @@ func RunDaemon(cfg *ProxyConfig) error {
 		return fmt.Errorf("invalid target port: %w", err)
 	}
 	rp := httputil.NewSingleHostReverseProxy(target)
+
+	// Director: tell Laravel it's an HTTPS request on the canonical domain.
+	// Without these headers Laravel generates redirect URLs with the wrong
+	// scheme (http) and wrong port (8443).
+	defaultDirector := rp.Director
+	rp.Director = func(req *http.Request) {
+		defaultDirector(req)
+		// Strip any port from the Host header so Laravel sees just the domain.
+		req.Host = cfg.Domain
+		req.Header.Set("X-Forwarded-Proto", "https")
+		req.Header.Set("X-Forwarded-Host", cfg.Domain)
+		req.Header.Set("X-Forwarded-Port", "443")
+		// REMOTE_ADDR hint for some middleware stacks.
+		req.Header.Set("X-Real-IP", req.RemoteAddr)
+	}
+
 	rp.ModifyResponse = func(resp *http.Response) error {
-		// Rewrite any Location headers that point at the PHP server.
 		loc := resp.Header.Get("Location")
-		if strings.HasPrefix(loc, "http://127.0.0.1:"+cfg.TargetPort) ||
-			strings.HasPrefix(loc, "http://0.0.0.0:"+cfg.TargetPort) ||
-			strings.HasPrefix(loc, "http://localhost:"+cfg.TargetPort) {
-			resp.Header.Set("Location",
-				strings.Replace(loc, "http://", "https://", 1))
+		if loc == "" {
+			return nil
+		}
+		// Rewrite Location headers that use the wrong scheme or include :8443.
+		// Handles redirects from the PHP server (localhost:PORT) and from
+		// Laravel's own URL generation when it hasn't trusted the forwarded headers.
+		for _, bad := range []string{
+			"http://127.0.0.1:" + cfg.TargetPort,
+			"http://0.0.0.0:" + cfg.TargetPort,
+			"http://localhost:" + cfg.TargetPort,
+			"http://" + cfg.Domain + ":" + cfg.ProxyPort,
+			"https://" + cfg.Domain + ":" + cfg.ProxyPort,
+			"http://" + cfg.Domain,
+		} {
+			if strings.HasPrefix(loc, bad) {
+				newLoc := "https://" + cfg.Domain + loc[len(bad):]
+				resp.Header.Set("Location", newLoc)
+				return nil
+			}
 		}
 		return nil
 	}

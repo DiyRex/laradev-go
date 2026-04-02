@@ -90,6 +90,8 @@ func Run(args []string, cfg *config.Config, mgr *process.Manager) int {
 		return cmdProxyStatus(cfg)
 	case "proxy:ports":
 		return cmdProxyPorts(cfg)
+	case "proxy:trust":
+		return cmdProxyTrust(cfg)
 	case "proxy:daemon": // internal — called by proxy:up as background process
 		return cmdProxyDaemon(cfg)
 	case "help", "-h", "--help":
@@ -541,6 +543,20 @@ func cmdProxyPorts(cfg *config.Config) int {
 	return 0
 }
 
+func cmdProxyTrust(_ *config.Config) int {
+	Banner()
+	fmt.Println()
+	Step("Re-trusting LaraDev CA in system keychain (sudo required)…")
+	fmt.Println()
+	if err := proxy.TrustCA(); err != nil {
+		Error("Trust failed: " + err.Error())
+		return 1
+	}
+	Success("CA trusted — restart your browser for the change to take effect.")
+	fmt.Println()
+	return 0
+}
+
 // cmdProxyDaemon is the internal entry point for the background daemon process.
 // It is not advertised in help — it is only launched by cmdProxyUp.
 func cmdProxyDaemon(cfg *config.Config) int {
@@ -605,6 +621,7 @@ func PrintHelp() {
 			{"proxy:down", "Stop HTTPS reverse proxy"},
 			{"proxy:status", "Show proxy status"},
 			{"proxy:ports", "Apply port 443→8443 redirect (sudo)"},
+			{"proxy:trust", "Re-trust CA cert in system keychain"},
 		}},
 	}
 

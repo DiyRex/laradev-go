@@ -3,11 +3,13 @@ package proxy
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // SetupProxy performs the one-time setup for a project's HTTPS proxy:
@@ -25,9 +27,12 @@ func SetupProxy(cfg *ProxyConfig) error {
 		return fmt.Errorf("cannot create ~/.laradev dirs: %w", err)
 	}
 
-	// 2 & 3. CA generation + trust
-	if _, _, err := EnsureCA(); err != nil {
-		return err
+	// 2 & 3. CA generation + trust (always re-trust so browsers accept the cert).
+	if err := TrustCA(); err != nil {
+		// Non-fatal — proxy still works, browser will just show a warning.
+		fmt.Printf("  ⚠  CA trust failed: %v\n", err)
+		fmt.Printf("  ⚠  To trust manually run:\n")
+		printManualTrustHint()
 	}
 
 	// 4. Domain certificate (signed by local CA)
@@ -40,12 +45,17 @@ func SetupProxy(cfg *ProxyConfig) error {
 		return fmt.Errorf("failed to update /etc/hosts: %w", err)
 	}
 
-	// 6. Persistent port forwarding (443→8443) so no :8443 in the URL
+	// 6. Persistent port forwarding (443→8443) so no :8443 in the URL.
+	//    Skip if port 443 is already occupied by another process (e.g. Docker Desktop).
 	fmt.Println("  Setting up port 443 → 8443 forwarding (sudo required)…")
-	if err := SetupPersistentPortForwarding(cfg); err != nil {
+	if port443InUse() {
+		fmt.Println("  ⚠  Port 443 is already in use by another process (Docker Desktop, nginx, etc.)")
+		fmt.Printf("  ⚠  App will be at https://%s:%s\n", cfg.Domain, cfg.ProxyPort)
+		fmt.Println("  ⚠  Stop the conflicting process and run: laradev proxy:ports")
+	} else if err := SetupPersistentPortForwarding(cfg); err != nil {
 		fmt.Printf("  ⚠  Port forwarding failed: %v\n", err)
-		fmt.Printf("  ⚠  App will be at %s (port forwarding can be retried with: laradev proxy:ports)\n",
-			fmt.Sprintf("https://%s:%s", cfg.Domain, cfg.ProxyPort))
+		fmt.Printf("  ⚠  App will be at https://%s:%s (retry with: laradev proxy:ports)\n",
+			cfg.Domain, cfg.ProxyPort)
 	} else {
 		cfg.PortForwarding = true
 		fmt.Println("  ✓ Port forwarding configured (persists across reboots)")
@@ -279,5 +289,15 @@ func applyIptables(cfg *ProxyConfig) error {
 		}
 	}
 	return nil
+}
+
+// port443InUse returns true if something is already listening on TCP port 443.
+func port443InUse() bool {
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:443", 500*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 

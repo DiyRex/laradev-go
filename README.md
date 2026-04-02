@@ -32,7 +32,7 @@ It works in two ways:
  │                                                                 │
  │ PHP 8.4.1 │ Node v22.0.0 │ DB sqlite (48K) │ Log 4.0K          │
  │                                                                 │
- │ ● App https://taskify.test:8443    Vite http://localhost:5173   │
+ │ ● App https://taskify.test          Vite http://localhost:5173   │
  │                                                                 │
  │ Pest · Vite · Breeze                                            │
  ╰──────────────────────────────────────────────────────────────────╯
@@ -149,11 +149,12 @@ All proxy state is stored in `~/.laradev/` — **nothing is added to your projec
 |---|---|
 | **Domain** | Auto-derived from `APP_NAME` in `.env` — `"My Shop"` → `myshop.test` |
 | **DNS** | Adds `127.0.0.1 myapp.test` to `/etc/hosts` (one line, sudo once) |
-| **TLS cert** | Generated in pure Go, stored in `~/.laradev/certs/`, trusted by your system |
+| **TLS cert** | Generated in pure Go, stored in `~/.laradev/certs/`, trusted in the System keychain |
 | **Proxy** | Go reverse proxy listening on `127.0.0.1:8443`, forwarding to `localhost:PHP_PORT` |
-| **HTTP redirect** | Port `8080` redirects all traffic to HTTPS |
+| **Port redirect** | `pfctl` (macOS) or `iptables` (Linux) persistently routes port `443 → 8443` — set up automatically during `proxy:setup` via a LaunchDaemon/systemd service |
+| **HTTP redirect** | Port `8080` → `https://domain.test` redirect |
 
-The proxy runs on port `8443` (no root required). Use `proxy:ports` to enable a one-line `pfctl`/`iptables` redirect so port `443` routes there too.
+The proxy daemon runs on port `8443` (no root required). Port `443` is routed there transparently at the OS level — your browser always sees a clean `https://myapp.test` URL with no port number.
 
 ### Setup (one time per project)
 
@@ -165,13 +166,13 @@ laradev proxy:setup
 
 This will:
 1. Generate a local CA (pure Go, stored in `~/.laradev/ca/`)
-2. Trust the CA in your system keychain (macOS: login keychain; Linux: system CA store)
+2. Trust the CA in the **System keychain** (macOS: `sudo security add-trusted-cert`; Linux: `update-ca-certificates`) — all browsers will trust it without warnings
 3. Generate a TLS certificate for your `.test` domain (pure Go, signed by the local CA)
 4. Add the domain to `/etc/hosts`
-5. Save proxy config to `~/.laradev/projects/{id}/proxy.conf`
-6. Print optional instructions for enabling port `443` redirect
+5. Install a persistent port `443 → 8443` redirect via LaunchDaemon (macOS) or systemd (Linux)
+6. Save proxy config to `~/.laradev/projects/{id}/proxy.conf`
 
-That's the only command you ever need to run manually. After setup, the proxy is fully automatic.
+After setup, visiting `https://myapp.test` works immediately — no port number in the URL, no browser security warnings. That's the only command you ever need to run manually.
 
 ### Automatic start / stop
 
@@ -199,24 +200,24 @@ Select it to stop the proxy. Select a stopped proxy to start it. If not yet conf
 laradev proxy:status   # Show domain, target port, and running state
 ```
 
-### Optional: true port 443 (no :8443 in URL)
+### Re-trusting the CA
 
-The proxy daemon itself runs on port `8443` (does not require root). To access your app via `https://myapp.test` (port 443), you need an OS-level port redirect. Run once:
+If you reinstall the binary or the CA trust is lost (e.g. after a keychain reset), re-run trust without touching the cert:
+
+```bash
+laradev proxy:trust
+```
+
+This removes the cached trust flag and re-adds the CA to the System keychain. Restart your browser afterwards.
+
+### Port 443 redirect
+
+Port `443 → 8443` forwarding is configured automatically during `proxy:setup` via a system daemon (LaunchDaemon on macOS, systemd on Linux). It persists across reboots.
+
+If the forwarding ever stops working (e.g. after Docker Desktop reloads pfctl rules on macOS), reapply it manually:
 
 ```bash
 laradev proxy:ports
-```
-
-This applies the redirect rule using `pfctl` on macOS or `iptables` on Linux. The rule is **not persistent** — it resets on reboot. Re-run `proxy:ports` after each restart, or add it to a startup script.
-
-**macOS equivalent (manual):**
-```bash
-sudo sh -c "echo 'rdr pass on lo0 proto tcp from any to any port 443 -> 127.0.0.1 port 8443' | pfctl -ef -"
-```
-
-**Linux equivalent (manual):**
-```bash
-sudo iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 8443
 ```
 
 ### TUI indicators
@@ -235,10 +236,11 @@ Stored at `~/.laradev/projects/{id}/proxy.conf` — managed by `laradev`, no nee
 
 ```ini
 DOMAIN="myapp.test"
-TARGET_PORT="8007"    # PHP server port
-PROXY_PORT="8443"     # HTTPS listener
-HTTP_PORT="8080"      # HTTP → HTTPS redirect listener
+TARGET_PORT="8007"      # PHP server port
+PROXY_PORT="8443"       # internal HTTPS listener (443 → this via pfctl/iptables)
+HTTP_PORT="8080"        # HTTP → HTTPS redirect listener (80 → this)
 ENABLED="true"
+PORT_FORWARDING="true"  # true once persistent 443→8443 redirect is installed
 ```
 
 ---
@@ -264,11 +266,12 @@ Default ports: PHP `0.0.0.0:8007`, Vite `localhost:5173` (configurable via `.lar
 
 | Command | Description |
 |---|---|
-| `laradev proxy:setup` | **One-time setup** — generate cert, add `/etc/hosts` entry, save config |
+| `laradev proxy:setup` | **One-time setup** — generate cert, trust CA, add `/etc/hosts` entry, configure port 443 redirect |
 | `laradev proxy:status` | Show domain, target port, and running state |
 | `laradev proxy:up` | Manually start the proxy (automatic with `laradev up`) |
 | `laradev proxy:down` | Manually stop the proxy (automatic with `laradev down`) |
-| `laradev proxy:ports` | Apply port 443 → 8443 redirect via pfctl/iptables (sudo, resets on reboot) |
+| `laradev proxy:ports` | Reapply port 443 → 8443 redirect if it was cleared (e.g. by Docker Desktop) |
+| `laradev proxy:trust` | Re-trust the CA in the system keychain (run after keychain reset or reinstall) |
 
 ### Development
 

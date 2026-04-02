@@ -200,18 +200,29 @@ func loadCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	return cert, key, nil
 }
 
+// TrustCA forces the CA to be added to the OS trust store, removing any cached
+// "already trusted" flag first. Call this from proxy:setup or proxy:trust.
+func TrustCA() error {
+	// Remove the flag so EnsureCA will re-trust even if it ran before.
+	_ = os.Remove(caTrustedFlag())
+	_, _, err := EnsureCA()
+	return err
+}
+
 // trustCA adds the CA cert to the OS trust store.
 func trustCA() error {
 	switch runtime.GOOS {
 	case "darwin":
-		// Add to the login keychain — no sudo needed, macOS may show a
-		// password dialog for the user's own keychain.
-		home, _ := os.UserHomeDir()
-		keychain := home + "/Library/Keychains/login.keychain-db"
-		cmd := exec.Command("security", "add-trusted-cert",
-			"-d", "-r", "trustRoot", "-k", keychain, caCertFile())
+		// Add to the System keychain (trusted by all browsers including Chrome/Safari).
+		// Requires sudo — macOS will prompt for password.
+		fmt.Println("  Adding CA to System keychain (sudo required for browser trust)…")
+		cmd := exec.Command("sudo", "security", "add-trusted-cert",
+			"-d", "-r", "trustRoot",
+			"-k", "/Library/Keychains/System.keychain",
+			caCertFile())
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
 		return cmd.Run()
 
 	case "linux":
